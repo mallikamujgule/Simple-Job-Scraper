@@ -1,5 +1,5 @@
 ---
-name: Jobscraper
+name: mallika-job-search
 description: >-
   Use when Mallika wants to run the daily job search pipeline for product and UX
   design roles. Fetches fresh postings (< 24 hours old) from LinkedIn, Indeed,
@@ -14,7 +14,7 @@ description: >-
 dependencies: python>=3.10, requests, openpyxl, beautifulsoup4, tqdm
 ---
 
-# Jobscraper pipeline (Claude Desktop, macOS)
+# mallika-job-search (Claude Desktop, macOS)
 
 Run everything from this folder. Python does the deterministic work (fetching,
 filtering, dedup, exports). It never calls a model. Every small judgment task
@@ -22,7 +22,7 @@ runs on **Haiku 5.5** through Agent subagents that you spawn with `model: "haiku
 You (the session model) only orchestrate and answer Mallika.
 
 ```bash
-cd ~/Documents/Simple-Job-Scraper
+cd ~/.claude/skills/mallika-job-search
 source .venv/bin/activate   # create once: python3 -m venv .venv && pip install -r requirements.txt
 ```
 

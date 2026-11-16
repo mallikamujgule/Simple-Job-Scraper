@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Jobscraper Pipeline — free product/UX design job fetcher, deduplicator & dated CSV exporter
+mallika-job-search — free product/UX design job fetcher, deduplicator & dated CSV exporter
 (macOS + Claude Desktop only; see config.py for the candidate profile and paths)
 Platforms: LinkedIn (free HTML), Indeed (GraphQL API), Arbeitnow, Xing, Stepstone, Wellfound,
            EU Remote Jobs, ATS Direct (Greenhouse/SmartRecruiters/Ashby)

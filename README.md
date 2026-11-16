@@ -1,4 +1,4 @@
-# Jobscraper (Mallika Mujgule, product and UX design)
+# mallika-job-search
 
 Daily job pipeline that fetches fresh postings (< 24 hours old) from 8 sources
 (LinkedIn, Indeed, Arbeitnow, Xing, Stepstone, Wellfound, EU Remote Jobs, ATS Direct),
@@ -21,7 +21,7 @@ keywords live in [`candidate.json`](candidate.json). The name is read from
 ## Quick start
 
 ```bash
-cd ~/Documents/Simple-Job-Scraper
+cd ~/.claude/skills/mallika-job-search
 python3 -m venv .venv && source .venv/bin/activate   # needs Python 3.10+
 pip install -r requirements.txt
 python3 apify_job_search.py        # 1. scrape

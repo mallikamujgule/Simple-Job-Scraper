@@ -52,11 +52,11 @@
 
 ## 3. Automated Execution Pipeline Script
 
-The script lives at `~/Documents/Simple-Job-Scraper/apify_job_search.py`.
+The script lives at `~/.claude/skills/mallika-job-search/apify_job_search.py`.
 
 Run it with:
 ```bash
-cd "~/Documents/Simple-Job-Scraper" && python3 apify_job_search.py
+cd "~/.claude/skills/mallika-job-search" && python3 apify_job_search.py
 ```
 
 Dependencies: `requests` (for Xing, Stepstone, Indeed GraphQL API), `beautifulsoup4` (for HTML parsing and JSON-LD description extraction), `openpyxl` (for XLSX export).

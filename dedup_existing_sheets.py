@@ -28,7 +28,7 @@ from datetime import datetime
 
 from job_identity import normalize_job_url
 
-JOB_SEARCH_DIR = Path("/home/sagar/Skills/Jobscraper/Job Search")
+from config import JOB_SEARCH_DIR, SEARCH_ROLES, MAX_EXP_YEARS
 
 FIELDNAMES = ["language", "job_board", "role_type", "title", "company", "location",
               "posted_at", "exp_required", "match_score", "job_url"]
@@ -62,9 +62,9 @@ def rewrite_md(md_path: Path, jobs: list[dict], now_str: str) -> None:
 
 ## Constraints Summary
 - **Freshness:** Last 24 Hours
-- **Experience:** <= 2 Years (No Senior/Lead/Manager roles)
-- **Role Types:** Full-Time & Internships (Germany-wide) | Working Student (**Hamburg & Kiel ONLY**)
-- **Target Roles:** Data Engineer, Analytics Engineer, Data Analyst, AI Data Engineer
+- **Experience:** up to {MAX_EXP_YEARS} years required (no Senior/Lead/Head roles)
+- **Locations:** Germany or EU-remote | Working Student: Berlin/Potsdam/remote-Germany
+- **Target Roles:** {", ".join(SEARCH_ROLES)}
 
 | # | Language | Job Board | Role Type | Company | Job Title | Location | Match | Direct Link |
 |---|---|---|---|---|---|---|---|---|

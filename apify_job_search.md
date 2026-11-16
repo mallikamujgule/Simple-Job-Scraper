@@ -1,29 +1,21 @@
 # Automated Job Search, Filtering & Dynamic CSV Export (Last 24 Hours)
 
-> **Instructions for Oh My Pi (OMP) Session:**
-> When this file is uploaded/run in an OMP session, execute the automated job search pipeline below.
-> It fetches fresh job postings (< 24 hours old) from **LinkedIn**, **Indeed**, **Arbeitnow**, **Xing**, **Stepstone**, **Wellfound**, **EU Remote Jobs**, and **ATS Direct** across all target role profiles, applies location-aware working student rules and internship inclusions, deduplicates them, filters out roles requiring > 2 years of experience, and outputs a sortable **CSV + XLSX** (autofilter dropdowns, clickable links) with the current execution date/time stamp into `/home/sagar/Skills/Jobscraper/Job Search/`.
+> **macOS + Claude Desktop only.** Run the pipeline as described in `SKILL.md`. This file
+> documents platform details; the candidate profile, search roles and thresholds live in
+> `candidate.json` and `config.py`.
 
-> **100% Free (2026-09-05):** $0.00/run — all platforms free. Indeed uses a public GraphQL API; LinkedIn uses free HTML scraping. No Apify.
+> **100% free:** $0.00/run for scraping. Haiku 5.5 subagent judgments use Claude Desktop usage.
 
 ---
 
 ## 1. Context & Setup
 
-- **Candidate Name:** Sagar Marthandan
-- **Base Location:** Kiel, Germany
-- **Base Resumes Directory:** `/home/sagar/Documents/YAML-CV/skills/okf-cv/okf/base_files`
-- **Portfolio Directory:** `/home/sagar/Documents/YAML-CV/skills/okf-cv/okf/portfolio`
-- **Target Output Directory:** `/home/sagar/Skills/Jobscraper/Job Search`
-- **Cost:** $0.00/run (all platforms free — no Apify)
-- **Dependency:** `requests` (for Xing, Stepstone, Indeed GraphQL API), `beautifulsoup4` (for HTML parsing and JSON-LD description extraction), `openpyxl` (for XLSX export). Install: `pip install requests beautifulsoup4 openpyxl`
-- **Target Role Profiles (Consolidated 10 core roles — search engines cover variants):**
-  1. **Core Data & Pipeline Engineering:** `Data Engineer`, `Analytics Engineer`
-  2. **Business Intelligence & Analytics:** `Data Analyst`
-  3. **AI & Data Science:** `AI Engineer`, `Machine Learning Engineer`
-  4. **Business Analytics:** `Business Analyst`
-  5. **Database & Systems:** `SQL Developer`
-  6. **Internships & Working Student:** `Praktikum Data`, `Werkstudent Data`, `Werkstudent Business Intelligence`
+- **Candidate Name:** read from `~/.claude/skills/mallika-cv/okf/profile.yaml` (copy in `candidate.json`)
+- **Base Location:** Berlin, Germany
+- **Target Output Directory:** `Job Search/` inside this repo (`JOBSCRAPER_OUTPUT_DIR` overrides)
+- **Application tracker:** `~/Documents/mallika_applications_tracker.csv`
+- **Dependencies:** `requests`, `beautifulsoup4`, `openpyxl`, `tqdm` (`requirements.txt`, Python 3.10+)
+- **Target role profiles:** Product Designer / UX/UI Designer; AI-enabled Product Designer / Product Design Engineer; Werkstudent / intern UX (see `search_roles` in `candidate.json`)
 
 ---
 
@@ -51,7 +43,7 @@
    - **ALLOWED:** 0–2 years experience, Junior, Entry-Level, Associate, Working Student, Intern, or unspecified low-experience roles.
    - **REJECTED:** Any role requiring **> 2 years of experience** (e.g., 3+, 4+, 5+ years, or titled *Senior*, *Lead*, *Principal*, *Staff*, *Manager*, *Head*, *Architect*, *Director*).
 6. **Output Deliverables Directory & Naming:**
-   - **Directory:** `/home/sagar/Skills/Jobscraper/Job Search/` (Auto-created if not present)
+   - **Directory:** `Job Search/` (Auto-created if not present)
    - **CSV File:** `Job_Search_<Month>_<Day>_<Year>.csv` (e.g., `Job_Search_Aug_4_2026.csv`) with UTF-8 BOM encoding for Excel/Calc sorting.
    - **JSON File:** `Job_Search_<Month>_<Day>_<Year>.json`
    - **Markdown Summary:** `JOB_OPENINGS_LAST_24H.md`
@@ -60,11 +52,11 @@
 
 ## 3. Automated Execution Pipeline Script
 
-The script lives at `/home/sagar/Skills/Jobscraper/apify_job_search.py`.
+The script lives at `~/Documents/Simple-Job-Scraper/apify_job_search.py`.
 
 Run it with:
 ```bash
-cd "/home/sagar/Skills/Jobscraper" && python3 apify_job_search.py
+cd "~/Documents/Simple-Job-Scraper" && python3 apify_job_search.py
 ```
 
 Dependencies: `requests` (for Xing, Stepstone, Indeed GraphQL API), `beautifulsoup4` (for HTML parsing and JSON-LD description extraction), `openpyxl` (for XLSX export).
@@ -76,7 +68,7 @@ The full source code is in `apify_job_search.py` — this .md file no longer emb
 
 ## 4. Deliverable Files Output Directory & Naming
 
-When executed, the script automatically creates `/home/sagar/Skills/Jobscraper/Job Search/` if it does not exist, and writes the following deliverables inside it:
+When executed, the script automatically creates `Job Search/` if it does not exist, and writes the following deliverables inside it:
 
 1. **`Job_Search_<Month>_<Day>_<Year>.csv`** (e.g. `Job_Search_Aug_4_2026.csv`):
    - Structured, sortable CSV with UTF-8 BOM encoding.
@@ -144,7 +136,7 @@ The Indeed scraper uses Indeed's public GraphQL API at `apis.indeed.com/graphql`
 - **`is_relevant_title(title)`**: Universal post-filter requiring at least one data/analytics/AI/SQL/Python keyword in the job title. Applied to ALL platforms via `check_experience_and_location()`. Catches Indeed fuzzy search false positives ("Nachtwächter" for "Data Engineer", "Kita Standortleitung" for "Business Analyst").
 
 ### Notes / Gotchas
-- **Output layout**: each run writes its files into `/home/sagar/Skills/Jobscraper/Job Search/YYYY-MM-DD/`.
+- **Output layout**: each run writes its files into `Job Search/YYYY-MM-DD/`.
 - **XLSX export**: requires `openpyxl`. If missing, script skips XLSX with a warning.
 - **Indeed GraphQL**: the `what` parameter does fuzzy search (searches description too), so `is_relevant_title` post-filter is essential. Use `-` to exclude terms, `""` for exact match.
 - **LinkedIn rate limiting**: 5 concurrent workers × 6 locations = ~30 requests over ~14s. 429 rate limiting on ~5% of requests; 3s backoff retry catches most. 3 workers would eliminate 429s but double runtime.

@@ -10,3 +10,6 @@ config.json
 
 # Node.js (Playwright Indeed fallback)
 node_modules/
+
+# Local virtualenv / pipeline scratch
+.venv/

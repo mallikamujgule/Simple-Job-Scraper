@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Jobscraper Pipeline — 100% Free Job Fetcher, Deduplicator & Dated CSV Exporter
-Platforms: LinkedIn (free HTML), Indeed (GraphQL API), Arbeitnow, Xing, Stepstone, ATS Direct (Greenhouse/SmartRecruiters/Ashby)
-Filters: Freshness (<24h), Experience (<=2 yrs), Working Student (Hamburg & Kiel ONLY),
-         Internships (Germany-wide), Title relevance (data/analytics/AI/SQL/Python keywords)
-Output Path: /home/sagar/Skills/Jobscraper/Job Search/YYYY-MM-DD/Job_Search_<Month>_<Day>_<Year>.csv
+Jobscraper Pipeline — free product/UX design job fetcher, deduplicator & dated CSV exporter
+(macOS + Claude Desktop only; see config.py for the candidate profile and paths)
+Platforms: LinkedIn (free HTML), Indeed (GraphQL API), Arbeitnow, Xing, Stepstone, Wellfound,
+           EU Remote Jobs, ATS Direct (Greenhouse/SmartRecruiters/Ashby)
+Filters: Freshness (<24h), Germany or EU-remote, Working Student (Berlin/Potsdam/remote-Germany),
+         Title relevance (product/UX/UI/design-engineer keywords), seniority ceiling
+Output Path: <repo>/Job Search/YYYY-MM-DD/Job_Search_<Month>_<Day>_<Year>.csv
 
 Changelog:
   2026-08-04: Initial release. LinkedIn + Indeed + Arbeitnow + Kununu. 24 SEARCH_ROLES. ~$1.50-3.00/run.
@@ -49,72 +51,23 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from tqdm import tqdm
 from job_identity import load_seen_job_urls, normalize_job_url
-from location_policy import is_germany_location, is_hamburg_or_kiel
-
-# Paths
-BASE_RESUMES_DIR = Path("/home/sagar/Documents/YAML-CV/skills/okf-cv/okf/base_files")
-PORTFOLIO_DIR = Path("/home/sagar/Documents/YAML-CV/skills/okf-cv/okf/portfolio")
-JOB_SEARCH_DIR = Path("/home/sagar/Skills/Jobscraper/Job Search")
+from location_policy import is_eligible_location, is_role_location_eligible
+from config import (
+    JOB_SEARCH_DIR, SEARCH_ROLES, MAX_EXP_YEARS, FRESHNESS_HOURS,
+    DOMAIN_TITLE_KEYWORDS, EXCLUDED_TITLE_PATTERNS, NON_TARGET_TITLE_PATTERNS,
+    CANDIDATE_SKILLS, CANDIDATE_NAME,
+)
 
 # Ensure Output Directory Exists
 JOB_SEARCH_DIR.mkdir(parents=True, exist_ok=True)
 
-# Search Parameters
-# Consolidated from 24 → 10 core roles.
-# LinkedIn/Indeed/Kununu search engines cover variants (Junior, Cloud, etc.) automatically.
-# German terms kept where they produce distinct results not covered by English equivalents.
-SEARCH_ROLES = [
-    # Core Data Engineering (covers Junior, Cloud, Data Warehouse, ETL, Dateningenieur)
-    "Data Engineer",
-    "Analytics Engineer",
-    # Business Intelligence & Analytics (covers Datenanalyst, BI Developer, BI Entwickler)
-    "Data Analyst",
-    # AI & Data Science (covers AI Data Engineer, GenAI, Junior Data Scientist)
-    "AI Engineer",
-    "Machine Learning Engineer",
-    # Business / Quantitative Analytics
-    "Business Analyst",
-    # Database & Systems (covers Database Developer, Python Data Developer)
-    "SQL Developer",
-    # Internships & Working Student (distinct result sets)
-    "Praktikum Data",
-    "Werkstudent Data",
-    "Werkstudent Business Intelligence",
-]
-
-MAX_EXP_YEARS = 2
-FRESHNESS_HOURS = 24
-
-
-# Seniority Filter Regex
-EXCLUDED_TITLE_PATTERNS = re.compile(
-    r"\b(senior|sr|lead|head|principal|staff|manager|director|architect|vp|chief|expert|team lead)\b",
-    re.IGNORECASE
-)
-
-
-
-# Core Tech Stack Keywords for Match Scoring
-TECH_KEYWORDS = ["dbt", "airflow", "spark", "pyspark", "python", "sql", "gcp", "bigquery", "aws", "azure", "databricks", "docker", "kafka", "postgresql", "snowflake"]
-
-# Core domain keywords that MUST appear in the job title for it to be relevant.
-# This is a universal post-filter applied to ALL platforms (LinkedIn, Indeed, Arbeitnow).
-# Without this, actors return garbage: "Nachtwächter" for "Data Engineer" search, etc.
-DOMAIN_TITLE_KEYWORDS = re.compile(
-    r"\b(data|daten\w*|analytics|analyst\w*|ai|artificial intelligence|"
-    r"bi|business intelligence|sql|python|database|datenbank\w*|"
-    r"machine learning|ml|deep learning|etl|pipeline|warehouse|"
-    r"datapipeline|dataops|mlops|llm|genai)\b",
-    re.IGNORECASE
-)
+# Search roles, seniority/title regexes and thresholds live in config.py / candidate.json.
 
 
 def is_relevant_title(title: str) -> bool:
-    """Check if the job title contains at least one core data/analytics/AI keyword.
-    This catches false positives from all actors (Indeed returns 'Nachtwächter' for
-    'Data Engineer' searches, LinkedIn returns 'Junior Software Engineer', etc.).
-    """
-    return bool(DOMAIN_TITLE_KEYWORDS.search(title))
+    """Title must name a product/UX/UI design discipline and not a non-target one
+    (graphic, interior, industrial design, etc.)."""
+    return bool(DOMAIN_TITLE_KEYWORDS.search(title)) and not NON_TARGET_TITLE_PATTERNS.search(title)
 
 
 def detect_language(text: str) -> str:
@@ -141,25 +94,26 @@ def classify_role_type(title: str, description: str) -> str:
 def check_experience_and_location(title: str, description: str, location: str) -> tuple[bool, str]:
     """Validate title, seniority, Germany eligibility, and working-student cities."""
     if not is_relevant_title(title):
-        return False, "Title not relevant to data/analytics/AI"
+        return False, "Title not relevant to product/UX design"
 
     if EXCLUDED_TITLE_PATTERNS.search(title):
         return False, "Seniority title excluded"
 
-    if not is_germany_location(location):
-        return False, f"Location outside or unknown for Germany ({location})"
-
     role_type = classify_role_type(title, description)
-    if role_type == "Working Student" and not is_hamburg_or_kiel(location):
-        return False, f"Working student outside Hamburg/Kiel ({location})"
+    if not is_eligible_location(location):
+        return False, f"Location outside Germany/EU-remote or unknown ({location})"
+    if not is_role_location_eligible(role_type, location):
+        return False, f"Working student outside Berlin/Potsdam/remote-Germany ({location})"
 
     return True, role_type
 
 def compute_match_score(text: str) -> int:
-    """Calculate percentage match score against Sagar's core tech stack."""
+    """Percentage match against the candidate's design skills (candidate.json)."""
     text_lower = text.lower()
-    matches = sum(1 for kw in TECH_KEYWORDS if kw in text_lower)
-    return min(100, int((matches / len(TECH_KEYWORDS)) * 100 * 2.5))  # Normalized score
+    if not CANDIDATE_SKILLS:
+        return 0
+    matches = sum(1 for kw in CANDIDATE_SKILLS if kw in text_lower)
+    return min(100, int((matches / len(CANDIDATE_SKILLS)) * 100 * 2.5))
 
 def _norm_company(c: str) -> str:
     c = (c or "").lower().strip()
@@ -256,7 +210,7 @@ def fetch_arbeitnow_jobs():
                     "company": item.get("company_name", "Unknown"),
                     "location": loc,
                     "posted_at": created_at.isoformat(),
-                    "exp_required": "<= 2 Years",
+                    "exp_required": f"<= {MAX_EXP_YEARS} Years",
                     "match_score": f"{score}%",
                     "job_url": item.get("url", ""),
                     "description": desc
@@ -318,20 +272,20 @@ def _enrich_descriptions(jobs: list[dict], platform: str, max_workers: int = 5) 
 
     PLATFORM_HEADERS = {
         "LinkedIn": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9",
         },
         "Xing": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
         },
         "Stepstone": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
             "Referer": "https://www.stepstone.de/",
         },
         "Wellfound": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9",
         },
     }
@@ -435,7 +389,7 @@ def _parse_xing_card(card, cutoff, seen_urls):
         "company": company,
         "location": location,
         "posted_at": posted_dt.isoformat() if posted_dt else "Last 24h",
-        "exp_required": "<= 2 Years",
+        "exp_required": f"<= {MAX_EXP_YEARS} Years",
         "match_score": f"{compute_match_score(title)}%",
         "job_url": f"https://www.xing.com{job_url}",
         "description": ""
@@ -460,7 +414,7 @@ def fetch_xing_jobs():
     cutoff = now - timedelta(hours=FRESHNESS_HOURS)
     session = requests.Session()
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
     })
     seen_urls = set()
@@ -594,7 +548,7 @@ def _parse_stepstone_card(card, cutoff, now):
         "company": company,
         "location": location,
         "posted_at": posted_dt.isoformat(),
-        "exp_required": "<= 2 Years",
+        "exp_required": f"<= {MAX_EXP_YEARS} Years",
         "match_score": f"{compute_match_score(title)}%",
         "job_url": f"https://www.stepstone.de{job_url}",
         "description": desc
@@ -621,7 +575,7 @@ def fetch_stepstone_jobs():
     cutoff = now - timedelta(hours=FRESHNESS_HOURS)
     session = requests.Session()
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
     })
     seen_urls = set()
@@ -719,7 +673,7 @@ def fetch_linkedin_jobs_free():
     }
 
     # Multi-city search: Germany-wide + major tech hubs.
-    LINKEDIN_LOCATIONS = ["Germany", "Berlin", "Munich", "Hamburg", "Frankfurt", "Cologne"]
+    LINKEDIN_LOCATIONS = ["Germany", "Berlin", "European Union"]
 
     def _fetch_with_retry(url: str) -> requests.Response | None:
         """Fetch URL with 3 retries on 429 using exponential backoff (3s, 6s, 12s)."""
@@ -812,7 +766,7 @@ def fetch_linkedin_jobs_free():
                     "company": company,
                     "location": card_location,
                     "posted_at": posted_raw or "Last 24h",
-                    "exp_required": "<= 2 Years",
+                    "exp_required": f"<= {MAX_EXP_YEARS} Years",
                     "match_score": f"{compute_match_score(title)}%",
                     "job_url": job_url,
                     "description": "",
@@ -968,7 +922,7 @@ def fetch_indeed_jobs():
                 "company": emp.get("name", "Unknown"),
                 "location": loc,
                 "posted_at": posted_at,
-                "exp_required": "<= 2 Years",
+                "exp_required": f"<= {MAX_EXP_YEARS} Years",
                 "match_score": f"{compute_match_score(f'{title} {desc}')}%",
                 "job_url": f"https://de.indeed.com/viewjob?jk={j.get('key', '')}",
                 "description": desc,
@@ -1017,16 +971,14 @@ def fetch_wellfound_jobs():
     from bs4 import BeautifulSoup
 
     WELLFOUND_ROLES = [
-        "data-engineer",
-        "analytics-engineer",
-        "data-analyst",
-        "ai-engineer",
-        "machine-learning-engineer",
-        "data-scientist",
+        "product-designer",
+        "ux-designer",
+        "ui-ux-designer",
+        "product-design-engineer",
     ]
     BASE_URL = "https://wellfound.com/role/l"
     HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9",
     }
 
@@ -1094,7 +1046,7 @@ def fetch_wellfound_jobs():
                 "company": company,
                 "location": location,
                 "posted_at": posted_dt.isoformat() if posted_dt else "Last 24h",
-                "exp_required": "<= 2 Years",
+                "exp_required": f"<= {MAX_EXP_YEARS} Years",
                 "match_score": f"{compute_match_score(title)}%",
                 "job_url": job_url,
                 "description": "",
@@ -1132,8 +1084,6 @@ def fetch_euremotejobs_jobs():
     API_URL = "https://euremotejobs.com/wp-json/wp/v2/job-listings"
     HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-    # Category IDs: Data=24, Engineering=65, IT=393
-    RELEVANT_CATEGORIES = {"job_listing_category-data", "job_listing_category-engineering", "job_listing_category-it"}
 
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=FRESHNESS_HOURS)
@@ -1156,10 +1106,7 @@ def fetch_euremotejobs_jobs():
             break
 
         for item in data:
-            # Filter by category (Data, Engineering, IT)
-            classes = item.get("class_list", [])
-            if not any(c in RELEVANT_CATEGORIES for c in classes):
-                continue
+            classes = item.get("class_list", [])  # title filter below selects design roles
 
             title = item.get("title", {}).get("rendered", "")
             if not title:
@@ -1179,10 +1126,10 @@ def fetch_euremotejobs_jobs():
             desc = BeautifulSoup(content_html, "html.parser").get_text(separator=" ", strip=True) if content_html else ""
 
             # Location from class_list (region taxonomy)
-            region = "Remote"
+            region = "Remote Europe"
             for c in classes:
                 if c.startswith("job_listing_region-"):
-                    region = c.replace("job_listing_region-", "").replace("-", " ").title()
+                    region = "Remote " + c.replace("job_listing_region-", "").replace("-", " ").title()
                     break
 
             job_url = item.get("link", "")
@@ -1199,7 +1146,7 @@ def fetch_euremotejobs_jobs():
                 "company": company,
                 "location": region,
                 "posted_at": posted_dt.isoformat() if posted_dt else "Last 24h",
-                "exp_required": "<= 2 Years",
+                "exp_required": f"<= {MAX_EXP_YEARS} Years",
                 "match_score": f"{compute_match_score(f'{title} {desc}')}%",
                 "job_url": job_url,
                 "description": desc,
@@ -1211,7 +1158,7 @@ def fetch_euremotejobs_jobs():
             break
         page += 1
 
-    print(f"    EU Remote Jobs: {len(jobs)} jobs (Data/Engineering/IT, last 24h)", flush=True)
+    print(f"    EU Remote Jobs: {len(jobs)} jobs (design titles, last 24h)", flush=True)
     return jobs
 
 def _style_xlsx_header(ws, header_fill, header_font, center):
@@ -1288,9 +1235,9 @@ def convert_csv_to_xlsx(csv_path: Path, xlsx_path: Path) -> None:
     print(f"[✓] XLSX exported to: {xlsx_path}")
 
 def main():
-    print("=== Jobscraper Pipeline (100% Free, No Apify) ===")
-    print(f"    LinkedIn: FREE HTML scraping ($0, 10 roles × 6 locations parallel)")
-    print(f"    Indeed: GraphQL API ($0, 10 roles parallel, full descriptions)")
+    print(f"=== Job Pipeline for {CANDIDATE_NAME} (100% free, macOS / Claude Desktop) ===")
+    print(f"    LinkedIn: FREE HTML scraping ($0, design roles × 3 locations parallel)")
+    print(f"    Indeed: GraphQL API ($0, design roles parallel, full descriptions)")
     print(f"    Xing/Stepstone: free HTML scraping (parallel)")
     print(f"    Wellfound: startup jobs via SSR role pages + JSON-LD detail pages")
     print(f"    EU Remote Jobs: WordPress REST API (full descriptions, no detail fetch)")
@@ -1366,9 +1313,7 @@ def main():
     eligible_current_jobs = []
     for job in current_jobs:
         location = job.get("location", "")
-        if (not is_germany_location(location)
-                or (job.get("role_type") == "Working Student"
-                    and not is_hamburg_or_kiel(location))):
+        if not is_role_location_eligible(job.get("role_type", ""), location):
             current_location_dropped += 1
             continue
         url = normalize_job_url(job.get("job_url", ""))
@@ -1389,9 +1334,7 @@ def main():
     new_jobs = []
     for job in deduped_jobs:
         location = job.get("location", "")
-        if (not is_germany_location(location)
-                or (job.get("role_type") == "Working Student"
-                    and not is_hamburg_or_kiel(location))):
+        if not is_role_location_eligible(job.get("role_type", ""), location):
             location_dropped += 1
             continue
         url = normalize_job_url(job.get("job_url", ""))
@@ -1417,7 +1360,7 @@ def main():
         f"skipped {same_day_duplicates} newly fetched URL duplicates."
     )
     print(
-        f"Germany-only location filter: removed {location_dropped} new and "
+        f"Location filter (Germany / EU-remote): removed {location_dropped} new and "
         f"{current_location_dropped} existing rows."
     )
     print(f"Cost: $0.00 (all platforms free — no Apify)")
@@ -1436,13 +1379,14 @@ def main():
     report_md = f"""# Daily Job Openings Report (Last 24 Hours)
 
 **Generated:** {now.strftime("%Y-%m-%d %H:%M")}  
-**CSV File:** `{csv_path}` (Sortable in Excel / Calc)
+**CSV File:** `{csv_path}` (sortable in Numbers / Excel)
 
 ## Constraints Summary
 - **Freshness:** Last 24 Hours
-- **Experience:** <= 2 Years (No Senior/Lead/Manager roles)
-- **Role Types:** Full-Time & Internships (Germany-wide) | Working Student (**Hamburg & Kiel ONLY**)
-- **Target Roles:** Data Engineer, Analytics Engineer, Data Analyst, AI Data Engineer
+- **Candidate:** {CANDIDATE_NAME}
+- **Experience:** up to {MAX_EXP_YEARS} years required (no Senior/Lead/Head/Director roles)
+- **Locations:** Germany (any city) or explicitly EU-remote | Working Student: Berlin/Potsdam/remote-Germany
+- **Target Roles:** {", ".join(SEARCH_ROLES)}
 
 | # | Language | Job Board | Role Type | Company | Job Title | Location | Match | Direct Link |
 |---|---|---|---|---|---|---|---|---|

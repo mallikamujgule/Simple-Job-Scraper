@@ -31,13 +31,16 @@ from urllib.parse import quote_plus
 import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
-from location_policy import is_germany_location, is_hamburg_or_kiel
+from location_policy import is_eligible_location, is_role_location_eligible
+from config import (
+    MAX_EXP_YEARS, FRESHNESS_HOURS, DOMAIN_TITLE_KEYWORDS, EXCLUDED_TITLE_PATTERNS,
+    NON_TARGET_TITLE_PATTERNS, CANDIDATE_SKILLS,
+)
 
 log = logging.getLogger("ats_scraper")
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-FRESHNESS_HOURS = 24
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -47,28 +50,8 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-# Seniority ceiling — same as pipeline
-EXCLUDED_TITLE_PATTERNS = re.compile(
-    r"\b(senior|sr|lead|head|principal|staff|manager|director|architect|vp|chief|expert|team lead)\b",
-    re.IGNORECASE
-)
-
-
-# Title relevance — same as pipeline
-DOMAIN_TITLE_KEYWORDS = re.compile(
-    r"\b(data|daten\w*|analytics|analyst\w*|ai|artificial intelligence|"
-    r"bi|business intelligence|sql|python|database|datenbank\w*|"
-    r"machine learning|ml|deep learning|etl|pipeline|warehouse|"
-    r"datapipeline|dataops|mlops|llm|genai)\b",
-    re.IGNORECASE
-)
-
-TECH_KEYWORDS = ["dbt", "airflow", "spark", "pyspark", "python", "sql", "gcp", "bigquery",
-                 "aws", "azure", "databricks", "docker", "kafka", "postgresql", "snowflake"]
-
-
 # ── Curated German company slugs ───────────────────────────────────────────────
-# Companies with offices in Germany that hire data/analytics/AI roles.
+# Companies with Germany/EU-remote offices that hire product/UX designers.
 # Slugs verified against live APIs on 2026-08-23.
 
 GREENHOUSE_SLUGS = [
@@ -82,6 +65,9 @@ GREENHOUSE_SLUGS = [
     "gitlab",         # GitLab — remote
     "vercel",         # Vercel — remote EU
     "planetscale",    # PlanetScale — remote
+    "sumup",          # SumUp — Berlin, fintech
+    "helsing",        # Helsing — Berlin/Munich
+    "gigs",           # Gigs — Berlin (already in applications tracker)
 ]
 
 SMARTRECRUITERS_SLUGS = [
@@ -95,13 +81,16 @@ ASHBY_SLUGS = [
     "supabase",       # Supabase — remote EU (3 data jobs, verified)
     "linear",         # Linear — remote (1 data job, verified)
     "vercel",         # Vercel — remote EU
+    "airapps",        # Air Apps (in applications tracker)
+    "rohlik",         # Rohlik Group (in applications tracker)
+    "getyourguide",   # GetYourGuide — Berlin
 ]
 
 
 # ── Shared filter functions (mirror pipeline) ─────────────────────────────────
 
 def _is_relevant_title(title: str) -> bool:
-    return bool(DOMAIN_TITLE_KEYWORDS.search(title))
+    return bool(DOMAIN_TITLE_KEYWORDS.search(title)) and not NON_TARGET_TITLE_PATTERNS.search(title)
 
 
 def _detect_language(text: str) -> str:
@@ -128,25 +117,27 @@ def _classify_role_type(title: str, description: str) -> str:
 def _check_experience_and_location(title: str, description: str, location: str) -> tuple[bool, str]:
     """Apply shared title, seniority, and conservative Germany location filters."""
     if not _is_relevant_title(title):
-        return False, "Title not relevant to data/analytics/AI"
+        return False, "Title not relevant to product/UX design"
 
     if EXCLUDED_TITLE_PATTERNS.search(title):
         return False, "Seniority title excluded"
 
     role_type = _classify_role_type(title, description)
-    if not is_germany_location(location):
-        return False, f"Location outside or unknown for Germany ({location})"
+    if not is_eligible_location(location):
+        return False, f"Location outside Germany/EU-remote or unknown ({location})"
 
-    if role_type == "Working Student" and not is_hamburg_or_kiel(location):
-        return False, f"Working student outside Hamburg/Kiel ({location})"
+    if not is_role_location_eligible(role_type, location):
+        return False, f"Working student outside Berlin/Potsdam/remote-Germany ({location})"
 
     return True, role_type
 
 
 def _compute_match_score(text: str) -> int:
     text_lower = text.lower()
-    matches = sum(1 for kw in TECH_KEYWORDS if kw in text_lower)
-    return min(100, int((matches / len(TECH_KEYWORDS)) * 100 * 2.5))
+    if not CANDIDATE_SKILLS:
+        return 0
+    matches = sum(1 for kw in CANDIDATE_SKILLS if kw in text_lower)
+    return min(100, int((matches / len(CANDIDATE_SKILLS)) * 100 * 2.5))
 
 
 def _parse_date_flexible(date_str: str) -> Optional[datetime]:
@@ -195,7 +186,7 @@ def _make_job_dict(title: str, company: str, location: str, posted_at: str,
         "company": company,
         "location": location,
         "posted_at": posted_at or "Last 24h",
-        "exp_required": "<= 2 Years",
+        "exp_required": f"<= {MAX_EXP_YEARS} Years",
         "match_score": f"{_compute_match_score(f'{title} {description}')}%",
         "job_url": url,
         "description": description,

@@ -1,13 +1,12 @@
 """Consumer-visible regressions for location, posting identity, history, and JD routing."""
 
-import asyncio
 import csv
+import json
 import sys
 import tempfile
 from datetime import date
 from pathlib import Path
 from unittest import TestCase
-from unittest.mock import patch
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 if str(REPOSITORY_ROOT) not in sys.path:
@@ -17,8 +16,11 @@ import verify_jobs
 from apify_job_search import check_experience_and_location
 from ats_scraper import _check_experience_and_location
 from job_identity import load_seen_job_urls, normalize_job_url
-from location_policy import is_germany_location, is_hamburg_or_kiel
+from location_policy import (
+    is_germany_location, is_eu_remote_location, is_parttime_city, is_role_location_eligible,
+)
 from verify_jobs import apply_judgment_answers
+import haiku_judge
 
 
 class GermanyLocationTests(TestCase):
@@ -80,20 +82,36 @@ class GermanyLocationTests(TestCase):
         self.assertTrue(is_germany_location("London, UK; Munich, Germany"))
         self.assertFalse(is_germany_location("London, UK; Remote Global"))
 
-    def test_working_student_city_matching_uses_complete_tokens(self):
-        self.assertTrue(is_hamburg_or_kiel("Hamburg, Germany"))
-        self.assertTrue(is_hamburg_or_kiel("Remote, Kiel, DE"))
-        self.assertFalse(is_hamburg_or_kiel("Kielce, Germany"))
-        self.assertFalse(is_hamburg_or_kiel("Berlin, Germany"))
+    def test_eu_remote_needs_remote_marker_and_eu_region(self):
+        for location in ("Remote Europe", "Remote, Portugal", "Remote - EU", "Europe (Remote)"):
+            with self.subTest(location=location):
+                self.assertTrue(is_eu_remote_location(location))
+        for location in ("Remote Global", "Remote EMEA", "Remote, AMER", "Lisbon, Portugal",
+                         "Remote, United States", "Europe", ""):
+            with self.subTest(location=location):
+                self.assertFalse(is_eu_remote_location(location))
 
-    def test_scraper_and_ats_paths_share_germany_and_student_guards(self):
+    def test_working_student_needs_berlin_potsdam_or_remote_germany(self):
+        self.assertTrue(is_parttime_city("Berlin, Germany"))
+        self.assertTrue(is_parttime_city("Potsdam"))
+        self.assertTrue(is_parttime_city("Remote, Germany"))
+        self.assertFalse(is_parttime_city("Hamburg, Germany"))
+        self.assertFalse(is_parttime_city("Remote Europe"))
+        self.assertFalse(is_role_location_eligible("Working Student", "Munich"))
+        self.assertTrue(is_role_location_eligible("Full-Time / Entry-Level", "Munich"))
+        self.assertTrue(is_role_location_eligible("Full-Time / Entry-Level", "Remote Europe"))
+
+    def test_scraper_and_ats_paths_share_location_and_title_guards(self):
         for check in (check_experience_and_location, _check_experience_and_location):
             with self.subTest(check=check.__module__):
-                self.assertFalse(check("Data Analyst", "", "London, UK")[0])
-                self.assertTrue(check("Data Analyst", "", "Munich")[0])
-                self.assertFalse(
-                    check("Working Student Data Analyst", "", "Kielce, Germany")[0]
-                )
+                self.assertFalse(check("Product Designer", "", "London, UK")[0])
+                self.assertTrue(check("Product Designer", "", "Munich")[0])
+                self.assertTrue(check("UX/UI Designer (m/f/d)", "", "Remote Europe")[0])
+                self.assertFalse(check("Senior Product Designer", "", "Berlin")[0])
+                self.assertFalse(check("Graphic Designer", "", "Berlin")[0])
+                self.assertFalse(check("Data Analyst", "", "Berlin")[0])
+                self.assertFalse(check("Werkstudent UX Designer", "", "Hamburg, Germany")[0])
+                self.assertTrue(check("Werkstudent UX Designer", "", "Berlin, Germany")[0])
 
 
 class PostingIdentityTests(TestCase):
@@ -188,36 +206,47 @@ class DatedHistoryTests(TestCase):
             self.assertIn(str(path), str(context.exception))
 
 
-class TypedJudgmentTests(TestCase):
-    def test_invalid_typed_answers_do_not_mark_a_row_reviewed(self):
+class HaikuJudgmentTests(TestCase):
+    GOOD = {"german": "a2_or_lower_ok", "experience": "minimum_3_years",
+            "profile": "product_or_ux_designer"}
+
+    def test_valid_answers_mark_row_reviewed(self):
+        row = {}
+        apply_judgment_answers(row, dict(self.GOOD))
+        self.assertEqual(row["detail_review_status"], "Reviewed")
+        self.assertEqual(row["detail_exp_years"], "3")
+        self.assertEqual(row["detail_language"], "German A2 OK")
+
+    def test_invalid_answers_do_not_mark_a_row_reviewed(self):
         row = {}
         with self.assertRaises(ValueError):
-            apply_judgment_answers(row, {
-                "german": {"choice": "none"},
-                "experience": {"choice": "invented_bucket"},
-            })
+            apply_judgment_answers(row, {**self.GOOD, "experience": "invented_bucket"})
         self.assertNotEqual(row.get("detail_review_status"), "Reviewed")
 
     def test_missing_description_routes_to_explicit_review(self):
-        rows = [{"description": "Too short"}]
-        asyncio.run(verify_jobs.llm_classify_all(rows))
-        self.assertTrue(rows[0]["detail_review_status"].startswith("Needs review:"))
-        self.assertEqual(rows[0]["detail_language"], "")
-        self.assertEqual(rows[0]["detail_exp_years"], "")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rows = [{"description": "Too short"}]
+            verify_jobs.prepare_jd_batches(rows, Path(temp_dir))
+            self.assertTrue(rows[0]["detail_review_status"].startswith("Needs review:"))
 
-    def test_failed_typed_judgment_routes_to_explicit_review(self):
-        rows = [{
-            "description": "Data analyst role. " * 10,
-            "detail_language": "German C1+ required",
-            "detail_exp_years": ">2",
-        }]
-        with patch.object(
-            verify_jobs,
-            "judge_batch",
-            side_effect=RuntimeError("provider unavailable"),
-            create=True,
-        ):
-            asyncio.run(verify_jobs.llm_classify_all(rows))
-        self.assertTrue(rows[0]["detail_review_status"].startswith("Needs review:"))
-        self.assertEqual(rows[0]["detail_language"], "")
-        self.assertEqual(rows[0]["detail_exp_years"], "")
+    def test_missing_or_invalid_haiku_results_fail_closed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir)
+            rows = [{"description": "Product designer role. " * 10} for _ in range(3)]
+            verify_jobs.prepare_jd_batches(rows, run_dir)
+            inputs = sorted(haiku_judge.batch_dir(run_dir).glob("jd_*.input.json"))
+            self.assertEqual(len(inputs), 1)
+            result = inputs[0].with_name("jd_001.result.json")
+            result.write_text(json.dumps({"0": self.GOOD, "1": {**self.GOOD, "german": "x"}}))
+            verify_jobs.apply_jd_results(rows, run_dir)
+            self.assertEqual(rows[0]["detail_review_status"], "Reviewed")
+            self.assertTrue(rows[1]["detail_review_status"].startswith("Needs review:"))
+            self.assertTrue(rows[2]["detail_review_status"].startswith("Needs review:"))
+            self.assertEqual(rows[2]["detail_language"], "")
+
+    def test_batches_name_the_haiku_model(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rows = [{"description": "UX designer role. " * 10}]
+            verify_jobs.prepare_jd_batches(rows, Path(temp_dir))
+            batch = next(haiku_judge.batch_dir(Path(temp_dir)).glob("jd_*.input.json"))
+            self.assertEqual(json.loads(batch.read_text())["model"], "claude-haiku-5-5")

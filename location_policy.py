@@ -279,24 +279,62 @@ def is_germany_location(location: str) -> bool:
     return any(_is_german_city_segment(part) for part in segments)
 
 
-_NEGATED_WORKING_CITY = re.compile(
-    r"\b(?:no|not|outside|except|excluding|exclude|unavailable\s+in|"
-    r"ineligible\s+in|not\s+(?:available|eligible|open|included|supported)\s+in)"
-    r"(?:\s+[a-z0-9]+){0,3}\s+(?:hamburg|kiel)\b|"
-    r"\b(?:hamburg|kiel)\b(?:\s+[a-z0-9]+){0,3}\s+"
-    r"(?:excluded|unavailable|ineligible|not\s+(?:available|eligible|open|included|supported))\b"
+_EU_REMOTE_REGION = re.compile(
+    r"(?<![a-z0-9])(?:europe|european union|eu|eea|european economic area|"
+    r"austria|belgium|bulgaria|croatia|cyprus|czechia|czech republic|denmark|"
+    r"estonia|finland|france|greece|hungary|ireland|italy|latvia|lithuania|"
+    r"luxembourg|malta|netherlands|poland|portugal|romania|slovakia|slovenia|"
+    r"spain|sweden)(?![a-z0-9])"
 )
-_WORKING_CITY = re.compile(r"(?<![a-z0-9])(?:hamburg|kiel)(?![a-z0-9])")
+_REMOTE_TOKEN = re.compile(r"(?<![a-z0-9])(?:remote|home office|homeoffice|anywhere in)(?![a-z0-9])")
+_NON_EU_REMOTE = re.compile(
+    r"(?<![a-z0-9])(?:global|worldwide|emea|amer|apac|americas|north america|"
+    r"united states|usa|us only|uk only|canada)(?![a-z0-9])"
+)
 
 
-def is_hamburg_or_kiel(location: str) -> bool:
-    """Return true for a positive Hamburg or Kiel location token, not Kielce."""
+def is_eu_remote_location(location: str) -> bool:
+    """True for explicit remote roles open in Europe/EU/an EU country.
+
+    Requires both a remote marker and an EU region word. Global, EMEA, Americas
+    and US-only labels are not evidence of EU eligibility.
+    """
     if not isinstance(location, str) or not location.strip():
         return False
     for segment in _LOCATION_SPLIT.split(location):
         folded = _fold(segment)
-        if _NEGATED_WORKING_CITY.search(folded):
-            continue
-        if _WORKING_CITY.search(folded):
+        if (_REMOTE_TOKEN.search(folded) and _EU_REMOTE_REGION.search(folded)
+                and not _NON_EU_REMOTE.search(folded) and not _NEGATED_COUNTRY.search(folded)):
             return True
     return False
+
+
+def is_eligible_location(location: str) -> bool:
+    """Germany (any city) or explicitly EU-remote."""
+    return is_germany_location(location) or is_eu_remote_location(location)
+
+
+def is_parttime_city(location: str, cities=None) -> bool:
+    """Working-student/internship roles need Berlin/Potsdam or a Germany-remote role."""
+    if not isinstance(location, str) or not location.strip():
+        return False
+    if cities is None:
+        from config import PARTTIME_CITIES
+        cities = PARTTIME_CITIES
+    city_re = re.compile(r"(?<![a-z0-9])(?:" + "|".join(re.escape(_fold(c)) for c in cities) + r")(?![a-z0-9])")
+    for segment in _LOCATION_SPLIT.split(location):
+        folded = _fold(segment)
+        if city_re.search(folded) and "new hampshire" not in folded:
+            return True
+        if _REMOTE_TOKEN.search(folded) and _has_positive_country_evidence(segment):
+            return True
+    return False
+
+
+def is_role_location_eligible(role_type: str, location: str) -> bool:
+    """Single location gate used by scraper, ATS fetchers and verification."""
+    if not is_eligible_location(location):
+        return False
+    if role_type == "Working Student":
+        return is_parttime_city(location)
+    return True

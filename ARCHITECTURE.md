@@ -1,6 +1,6 @@
 # Architecture
 
-Technical details for the Jobscraper pipeline and verification post-step.
+Technical details for the Jobscraper pipeline (macOS / Claude Desktop only) and the two-phase verification.
 
 ## Pipeline Flow
 
@@ -13,7 +13,7 @@ graph TD
     E --> F[CSV + JSON + MD + XLSX export]
     F --> G[verification Germany/history boundary]
     G --> H[platform checks + final full JD]
-    H --> I[OMP typed judge_batch]
+    H --> I[Haiku 5.5 subagent batches]
     I --> J[review and output-sheet routing]
 ```
 
@@ -32,7 +32,7 @@ Every scraped job passes through `check_experience_and_location()`; ATS results
 use the same location helpers:
 
 1. **Title relevance** (`is_relevant_title`) — rejects titles with no
-   data/analytics/AI/SQL/Python keyword.
+   product/UX/UI/design-engineer keyword (graphic, interior, industrial and similar designers excluded).
 2. **Seniority ceiling** — rejects senior, lead, principal, staff, manager,
    head, architect, and director titles. Required experience years are judged
    from the full description during verification.
@@ -40,7 +40,7 @@ use the same location helpers:
    `DE` country segment, a German state, or an unambiguous German city. Unknown,
    blank, and remote-region-only locations are not treated as Germany.
 4. **Working-student city restriction** — Working Student roles require
-   Hamburg or Kiel; other eligible role types may be Germany-wide.
+   Berlin, Potsdam or remote-Germany; other role types may be anywhere in Germany or explicit EU-remote.
 
 `verify_jobs.py` enforces the same location policy at the start of verification,
 so foreign/unknown rows from older inputs never appear in any output sheet.
@@ -79,7 +79,7 @@ same Germany and historical-URL checks. Historical outputs are never rewritten.
 ### Eligibility, acquisition, and typed judgment
 
 `run_verification()` first filters foreign/unknown locations and working-student
-roles outside Hamburg/Kiel. Germany-eligible rows whose exact URL appears in
+roles outside Berlin/Potsdam/remote-Germany. Germany-eligible rows whose exact URL appears in
 an earlier dated export are sent to **Previously Seen** without platform
 requests or JD judgment. Only remaining rows proceed.
 
@@ -88,25 +88,29 @@ status, then merges any longer description acquired during verification. The
 judge receives the final full description; it does not use regex-selected or
 truncated excerpts.
 
-The verification entry point is async and requires OMP eval's `judge_batch`.
-It submits independent typed choices for German requirement and required
-experience in one bounded-concurrency batch:
+Verification is two phases. `verify_jobs.py prepare` runs platform checks and
+writes Haiku batch files (`_haiku/jd_NNN.input.json`, `applied_NNN.input.json`).
+The Claude Desktop session spawns one Haiku 5.5 subagent per batch; each writes
+`*.result.json`. `verify_jobs.py finalize` validates the answers and routes rows.
+Three typed choices per posting:
 
 - German: required C1/C2, fluent/fließend, native/Muttersprache,
   verhandlungssicher, or standalone *sehr gute Deutschkenntnisse* maps to
-  `German C1+ required`; B1/B2 is allowed; preferred German maps to
+  `German B2+ required` (dropped); required B1 goes to Needs Review (candidate is A2); A2-or-lower and preferred German are kept. Preferred German maps to
   `German preferred`. *Sehr gute Deutsch- und Englischkenntnisse* stays in the
   allowed B1/B2 category unless C1+ is explicit.
-- Experience: use the lower bound of required ranges (0–2 → minimum 0,
-  1–3 → minimum 1, 3–5 → minimum 3); optional/preferred years do not
-  disqualify. Required *mehrjährige Erfahrung* / several years is >2.
+- Experience: use the lower bound of required ranges (0–2, 3, 4, or 5+);
+  optional/preferred years do not disqualify. Required over 4 years is dropped.
+  Required *mehrjährige Erfahrung* / several years counts as 3.
+- Profile: product/UX designer, AI product designer/design engineer, UX
+  Werkstudent/intern, adjacent design, or not a design target (dropped).
 - Missing/insufficient descriptions, failed judgments, and invalid typed
   answers are marked **Needs Review**; no permissive defaults can qualify a row.
 
 ### Routing and verified workbook
 
 After Germany/history and incomplete-review boundaries, rows route to Already
-Applied, Reposted, closed/C1+/experience exclusions, Staffing Companies, or To
+Applied, Reposted, closed/B2+/experience/non-design exclusions, Staffing Companies, or To
 Apply. To Apply always exists; other sheets are created when they contain rows:
 Reposted, Staffing Companies, Already Applied, Needs Review, Previously Seen.
 The workbook keeps the `detail_language`, `detail_exp_years`,
@@ -162,7 +166,7 @@ reintroduced into To Apply by carryover/repost handling.
 | `normalize_job_url()` | Stable URL identity; LinkedIn numeric IDs and Indeed `jk` canonicalized; known tracking removed; generic path/query identity preserved |
 | `load_seen_job_urls()` | Exact URL set from every earlier dated export; raises on unreadable history |
 | `is_germany_location()` | Conservative Germany country/state/city evidence |
-| `is_hamburg_or_kiel()` | Exact Hamburg/Kiel token check for working-student eligibility |
+| `is_eu_remote_location()` / `is_parttime_city()` / `is_role_location_eligible()` | EU-remote evidence, Werkstudent city check, and the single gate used everywhere |
 
 ### ATS (`ats_scraper.py`)
 
@@ -178,7 +182,7 @@ reintroduced into To Apply by carryover/repost handling.
 | Function | Purpose |
 |---|---|
 | `run_verification()` | Async entry: Germany/history prefilter, platform checks, final JD judgment, routing, workbook export |
-| `llm_classify_all()` | One bounded OMP `judge_batch` call on full final descriptions; missing/failing rows become Needs Review |
+| `prepare_jd_batches()` / `apply_jd_results()` | Write Haiku batches from full final descriptions; missing or invalid results become Needs Review |
 | `apply_judgment_answers()` | Validates typed choices and preserves exact experience buckets |
 | `verify_linkedin()` | LinkedIn liveness and JSON-LD description handling |
 | `verify_indeed()` | Indeed GraphQL API verification |

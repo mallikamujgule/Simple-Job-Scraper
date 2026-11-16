@@ -1,3 +1,20 @@
+## [2026-11-16] — Overhaul: designer profile, macOS / Claude Desktop only, Haiku 5.5
+
+### Changed
+- **Candidate** — pipeline retargeted from data/AI roles to Mallika Mujgule's product/UX design profiles, derived from the mallika-cv folder (CV, catalog, tracker). Name, search roles, skills and thresholds live in `candidate.json`; name is read from the mallika-cv `profile.yaml`.
+- **Runtime** — macOS and Claude Desktop only. Removed OMP (`judge_batch`, `completion()`, JS eval) and every `/home/sagar` and `/tmp` path; new `config.py` resolves paths from the repo and home folder and exits on non-macOS.
+- **Haiku 5.5** — German level, required experience, design-profile fit and already-applied matching now run as Haiku 5.5 subagent batches (`haiku_judge.py`). `verify_jobs.py` is split into `prepare` and `finalize`; missing or invalid answers go to Needs Review.
+- **Filters** — design title keywords (non-product design disciplines excluded), seniority ceiling kept, experience cap 4 years, German B2+ dropped (candidate is A2), B1 to Needs Review, Germany or explicit EU-remote locations, Werkstudent limited to Berlin/Potsdam/remote-Germany (was Hamburg/Kiel).
+- **Sources** — Wellfound roles, LinkedIn locations, EU Remote Jobs (no data-category filter) and ATS slugs (added SumUp, Helsing, Gigs, Air Apps, Rohlik, GetYourGuide on Ashby) retargeted to design.
+- **Docs** — SKILL.md, README, ARCHITECTURE and apify_job_search.md rewritten for the above.
+
+### Added
+- `config.py`, `candidate.json`, `haiku_judge.py`, `requirements.txt`; EU-remote and Werkstudent location helpers; Haiku batch tests.
+
+### Verification
+- 16 regression tests pass (`python3 -m unittest discover -s tests`).
+- Offline end-to-end run (prepare, real Haiku subagent, finalize) on a 3-row sample routed rows correctly. Live scraping was not re-run.
+
 ## [2026-10-07] — Germany-only eligibility, typed JD review, and exact URL history
 
 ### Changed

@@ -1,0 +1,31 @@
+{
+  "name": "Mallika Mujgule",
+  "source": "Derived from ~/.claude/skills/mallika-cv (okf/profile.yaml, base_files/english/resume.md, project_catalog.yaml, tracker CSV)",
+  "headline": "Product Designer, 4+ years: fintech, B2B industrial platforms, IoT, AI-enabled products. Berlin.",
+  "german_level": "A2",
+  "max_required_experience_years": 4,
+  "parttime_cities": ["Berlin", "Potsdam"],
+  "target_profiles": [
+    "Product Designer / UX/UI Designer (core: ICICI, Thermax EDGE, FYTA, UP42, NDI applications)",
+    "AI-enabled Product Designer / Product Design Engineer (Claude, Lovable, AI Studio prototyping; Rohlik-type roles)",
+    "Werkstudent / intern UX Designer (M.A. Innovation Design Management until Feb 2027)"
+  ],
+  "search_roles": [
+    "Product Designer",
+    "UX Designer",
+    "UI/UX Designer",
+    "UX/UI Designer",
+    "Digital Product Designer",
+    "Product Design Engineer",
+    "AI Product Designer",
+    "Werkstudent UX Designer",
+    "Werkstudent Product Design",
+    "Praktikum UX Design"
+  ],
+  "match_keywords": [
+    "figma", "user research", "usability testing", "prototyping", "design system",
+    "interaction design", "wireframe", "user flow", "mobile app", "fintech",
+    "b2b", "saas", "iot", "ai", "accessibility", "a/b test", "journey map",
+    "information architecture", "design thinking", "stakeholder"
+  ]
+}
